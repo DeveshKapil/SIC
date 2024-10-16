@@ -2,8 +2,16 @@
 #include<unordered_map>
 #include<fstream>
 #include<sstream>
+#include<iomanip>
+#include<string>
 
 using namespace std;
+
+string intToHex(int value) {
+    stringstream ss;
+    ss << hex << setw(4) << setfill('0') << value;
+    return ss.str();
+}
 
 void seperate(string &line , string &label , string &opcode , string &operand)
 {
@@ -16,7 +24,7 @@ void seperate(string &line , string &label , string &opcode , string &operand)
     ss >> opcode >> operand;
 }
 
-void firstPass(ifstream &ifile , int &pstart , int &plen , unordered_map<string , string> &optab , unordered_map<string , int> &symtab)
+int firstPass(ifstream &ifile , int &pstart , unordered_map<string , string> &optab , unordered_map<string , int> &symtab)
 {
     string line , label , opcode , operand;
     int locctr = 0;
@@ -25,10 +33,45 @@ void firstPass(ifstream &ifile , int &pstart , int &plen , unordered_map<string 
     while(getline(ifile , line))
     {
         seperate(line , label , opcode , operand);
-        
+        if (opcode == "START")
+        {
+            pstart = stoi(operand , nullptr , 16);
+            locctr = pstart;
+            flag = true;
+        }
+        else
+        {
+            if(!label.empty())
+                symtab[label] = locctr;
+
+            if(opcode == "WORD")
+                locctr += 3;
+            else if(opcode == "RESW")
+                locctr += 3*stoi(operand);
+            else if(opcode == "RESB")
+                locctr += stoi(operand);
+            else if(opcode == "BYTE")
+                locctr += operand.length()-3;
+            else
+                locctr += 3;
+        }
     }
+    return locctr - pstart;
 }
 
+void secondPass(ifstream &ifile ,ofstream &ofile , int &pstart , int &plen, unordered_map<string , string> &optab , unordered_map<string , int> &symtab)
+{
+    string line, label, opcode, operand;
+    int locctr = pstart;
+
+    while(getline(ifile , line))
+    {
+        seperate(line , label , opcode , operand);
+
+        if(opcode == "START")
+            ofile << "H" << label <<  ' ' << intToHex(pstart) << ' ' << intToHex(plen) << endl;
+    }
+}
 
 int main()
 {
@@ -42,6 +85,9 @@ int main()
         {"SUBR", "94"}, {"MULR", "98"}, {"DIVR", "9C"}, {"TIXR", "B8"}, {"CLEAR", "B4"}, {"SHIFTL", "A4"},
         {"SHIFTR", "A8"}, {"SVC", "B0"}, {"FLOAT", "C0"}, {"FIX", "C4"}, {"NORM", "C8"}, {"LPS", "D0"},
         {"STSW", "E8"}, {"RD", "D8"}, {"WD", "DC"}, {"TD", "E0"}, {"SSK", "EC"}, {"STI", "D4"}
+    };
+    unordered_map<string , string > registerTab = {
+        {"A", "00"}, {"X", "01"}, {"L", "02"}, {"PC", "07"}, {"SW", "08"}
     };
     unordered_map<string , int> symtab;
 
@@ -60,9 +106,12 @@ int main()
         return 1;
     }
 
-    firstPass (ifile , progStart , progLen , optab , symtab);
+    progLen = firstPass (ifile , progStart , optab , symtab);
 
-    secondPass ( ifile , ofile , progStart , optab , symtab);
+    ifile.clear();
+    ifile.seekg(0);
+
+    secondPass ( ifile , ofile , progStart ,progLen , optab , symtab);
 
     ifile.close();
     ofile.close();
