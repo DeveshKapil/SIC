@@ -7,11 +7,12 @@
 
 using namespace std;
 
-string intToHex(int value) {
+string intToHex(int value , int n) {
     stringstream ss;
-    ss << hex << setw(4) << setfill('0') << value;
+    ss << hex << setw(n) << setfill('0') << value;
     return ss.str();
 }
+
 
 void seperate(string &line , string &label , string &opcode , string &operand)
 {
@@ -22,6 +23,14 @@ void seperate(string &line , string &label , string &opcode , string &operand)
         label = "";
     }
     ss >> opcode >> operand;
+}
+
+void print(ofstream &ofile , int &locctr , int &start , string &objCode , int &count)
+{
+    ofile << "T" << intToHex(start , 6) << " " << intToHex(count , 2) << " " << objCode << endl;
+    objCode = "";
+    start = locctr;
+    count = 0;
 }
 
 int firstPass(ifstream &ifile , int &pstart , unordered_map<string , string> &optab , unordered_map<string , int> &symtab)
@@ -59,18 +68,106 @@ int firstPass(ifstream &ifile , int &pstart , unordered_map<string , string> &op
     return locctr - pstart;
 }
 
-void secondPass(ifstream &ifile ,ofstream &ofile , int &pstart , int &plen, unordered_map<string , string> &optab , unordered_map<string , int> &symtab)
+int secondPass(ifstream &ifile ,ofstream &ofile , int &pstart , int &plen, unordered_map<string , string> &optab , unordered_map<string , int> &symtab)
 {
-    string line, label, opcode, operand;
-    int locctr = pstart;
+    string line, label, opcode, operand , objCode;
+    int locctr = pstart , i=1 , counter = 0;
+    int start = locctr;
+
+
+    getline(ifile , line);
+    seperate(line , label , opcode , operand);
+
+    if(opcode == "START")
+        ofile << "H" << label <<  ' ' << intToHex(pstart , 6) << ' ' << intToHex(plen , 6) << endl;
 
     while(getline(ifile , line))
     {
-        seperate(line , label , opcode , operand);
+       
+        seperate(line, label, opcode, operand);
 
-        if(opcode == "START")
-            ofile << "H" << label <<  ' ' << intToHex(pstart) << ' ' << intToHex(plen) << endl;
+        if(opcode == "END") break;
+        else if (opcode == "RESW" || opcode == "RESB") 
+        {
+            if(objCode.length()>0)
+            {
+                print(ofile , locctr , start , objCode , counter);
+            }
+            if (opcode == "RESW")
+            {
+                locctr += 3*stoi(operand);
+            }
+            locctr += stoi(operand);
+        }
+        else
+        {
+            if(objCode.length() == 0)
+            {
+                start = locctr;
+            }
+            if(opcode == "BYTE")
+            {
+                string temp = operand.substr(2,operand.length()-3);
+                int len = temp.length();
+                if(counter+len/2 > 30) 
+                {
+                    print(ofile , locctr , start , objCode , counter);
+                }
+                objCode += temp;
+                locctr += len/2;
+                counter += len/2;
+                
+            }
+            else if (opcode == "WORD")
+            {
+                string temp = intToHex(stoi(operand) , 6);
+                if(counter+3 > 30) 
+                {
+                    print(ofile , locctr , start , objCode , counter);
+                }
+                objCode += temp;
+                locctr += 3;
+                counter += 3;
+            }
+            
+            else
+            {
+                if(optab.find(opcode)!=optab.end())
+                {
+                    string temp = optab[opcode];
+                    if(symtab.find(operand)!=symtab.end())
+                        temp += intToHex(symtab[operand] , 4);
+                    else
+                    {
+                        cerr << "Operand defined on line " << i << " " << operand << " was not found in the symtab." << endl;
+                        ofile.clear();
+                        return -1;
+                    }
+                    if(counter+3 > 30)
+                    {
+                        print(ofile , locctr , start , objCode , counter);
+                    }
+                    objCode += temp;
+                    locctr += 3;
+                    counter += 3;
+                }
+                else
+                {
+                    cerr << "Opcode defined on line " << i <<" " << opcode << " was not found in the optab." << endl;
+                    ofile.clear();
+                    return -1;
+                }
+            }
+        }
+        
+        i++;
     }
+    if(objCode.length()>0)
+    {
+        print(ofile , locctr , start , objCode , counter);
+    }
+    ofile << "E" << intToHex(pstart , 6) << endl;
+    return 0;
 }
 
 int main()
@@ -84,11 +181,10 @@ int main()
         {"STB", "78"}, {"STS", "7C"}, {"STF", "80"}, {"STT", "84"}, {"COMPF", "88"}, {"ADDR", "90"},
         {"SUBR", "94"}, {"MULR", "98"}, {"DIVR", "9C"}, {"TIXR", "B8"}, {"CLEAR", "B4"}, {"SHIFTL", "A4"},
         {"SHIFTR", "A8"}, {"SVC", "B0"}, {"FLOAT", "C0"}, {"FIX", "C4"}, {"NORM", "C8"}, {"LPS", "D0"},
-        {"STSW", "E8"}, {"RD", "D8"}, {"WD", "DC"}, {"TD", "E0"}, {"SSK", "EC"}, {"STI", "D4"}
+        {"STSW", "E8"}, {"RD", "D8"}, {"WD", "DC"}, {"TD", "E0"}, {"SSK", "EC"}, {"STI", "D4"},
+        {"RMO", "AC"}, {"COMPR", "A0"}
     };
-    unordered_map<string , string > registerTab = {
-        {"A", "00"}, {"X", "01"}, {"L", "02"}, {"PC", "07"}, {"SW", "08"}
-    };
+    
     unordered_map<string , int> symtab;
 
     int progStart = 0 , progLen = 0;
@@ -100,24 +196,37 @@ int main()
     ifstream ifile(str+".txt");
     ofstream ofile("ObjectCode.txt");
 
-    if(!ifile.is_open() && !ofile.is_open())
+    if (!ifile.is_open()) 
     {
-        cerr << "Error opening files" << endl;
+        cerr << "Error opening input file!" << endl;
         return 1;
     }
+    if (!ofile.is_open()) 
+    {
+        cerr << "Error opening output file!" << endl;
+        return 1;
+    }
+
 
     progLen = firstPass (ifile , progStart , optab , symtab);
 
     ifile.clear();
     ifile.seekg(0);
 
-    secondPass ( ifile , ofile , progStart ,progLen , optab , symtab);
-
+    int val = secondPass ( ifile , ofile , progStart ,progLen , optab , symtab );
     ifile.close();
     ofile.close();
-
-    cout << "Assembling complete...\nThe Opcode generated is stored in ObjectCode.txt\n";
-
+    optab.clear();
+    symtab.clear();
+   
+    if(val == -1)
+    {
+        cout << "Assembling terminated\nExiting program\n";
+        return 1;
+    }
+    else
+    {
+        cout << "Assembling complete...\nThe Opcode generated is stored in ObjectCode.txt\n";
+    }
     return 0;
-    
 }
