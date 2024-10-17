@@ -194,7 +194,7 @@ int main()
     cin >> str;
 
     ifstream ifile(str+".txt");
-    ofstream ofile("ObjectCode.txt");
+    ofstream ofile(str+"_Objectcode.txt");
 
     if (!ifile.is_open()) 
     {
